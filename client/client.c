@@ -183,7 +183,8 @@ int main(void) {
         if (!cs.paused && !cs.focused) {
             float fwd = IsKeyDown(KEY_W) - IsKeyDown(KEY_S);
             float right = IsKeyDown(KEY_D) - IsKeyDown(KEY_A);
-            float up = IsKeyDown(KEY_SPACE) - IsKeyDown(KEY_LEFT_CONTROL);
+            // Jumping disabled for now
+            float up = 0; // IsKeyDown(KEY_SPACE) - IsKeyDown(KEY_LEFT_CONTROL);
 
             Vector2 md = GetMouseDelta();
             float sens = 0.0025f;
@@ -252,7 +253,12 @@ int main(void) {
             BeginMode3D(camera);
                 DrawGrid(20, 1.0f);
                 DrawCube(deskPos, deskSize.x, deskSize.y, deskSize.z, DARKGRAY);
-                DrawCube(monPos, monSize.x, monSize.y, monSize.z, BLACK);
+
+                Vector3 screenPos = (Vector3){ monPos.x, monPos.y, monPos.z - (monSize.z/2 + 0.001f) };
+                Vector2 screenSize = (Vector2){ monSize.x * 0.95f, monSize.y * 0.90f };
+
+                Rectangle srcTerm = (Rectangle){ 0, 0, (float)termRT.texture.width, (float)-termRT.texture.height };
+                DrawBillboardRec(camera, termRT.texture, srcTerm, screenPos, screenSize, WHITE);
             EndMode3D();
         EndTextureMode();
 
