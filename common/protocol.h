@@ -12,6 +12,9 @@
 //   HIST <n>
 //   LINE <text...>
 //   PROMPT                  (signals prompt line exists already)
+//   OBJ_ADD <id> <x> <y> <z> <s> <r> <g> <b>
+//   OBJ_DEL <id>
+//   OBJ_CLEAR
 // Notes:
 // - All messages are ASCII lines terminated by '\n'.
 // - Server may send LINE messages anytime (terminal output/history).

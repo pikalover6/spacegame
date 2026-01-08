@@ -2,3 +2,6 @@ packdir.py
 bundle.txt
 
 /bin
+/llama
+
+*.gguf

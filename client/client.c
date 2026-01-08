@@ -11,6 +11,16 @@
 #include "psx_shader.h"
 #include "../common/protocol.h"
 
+#define MAX_OBJS 256
+
+typedef struct {
+    int id;
+    Vector3 pos;
+    float size;
+    unsigned char r, g, b;
+    int alive;
+} ObjCube;
+
 typedef struct {
     float x, y, z;
     float yaw, pitch;
@@ -33,7 +43,13 @@ typedef struct {
     Vector3 predPos;
     float predYaw;
     float predPitch;
+
+    ObjCube objs[MAX_OBJS];
 } ClientState;
+
+static void clear_objs(ClientState* cs);
+static ObjCube* find_obj(ClientState* cs, int id);
+static ObjCube* alloc_obj(ClientState* cs, int id);
 
 static float Snap(float v, float step) {
     return floorf(v / step + 0.5f) * step;
@@ -59,6 +75,9 @@ static void SetMouseCaptured(int captured) {
 }
 
 static void on_server_line(const char* line, void* ud) {
+    const char* p = line;
+    if (strncmp(p, "LINE ", 5) == 0) p += 5;
+
     ClientState* cs = (ClientState*)ud;
 
     if (strncmp(line, "HIST ", 5) == 0) {
@@ -83,6 +102,31 @@ static void on_server_line(const char* line, void* ud) {
             cs->predPitch = cs->ps.pitch;
         }
     }
+    else if (strncmp(line, "OBJ_CLEAR", 9) == 0) {
+        clear_objs(cs);
+    }
+    else if (strncmp(line, "OBJ_DEL ", 8) == 0) {
+        int id = 0;
+        if (sscanf(line + 8, "%d", &id) == 1) {
+            ObjCube* o = find_obj(cs, id);
+            if (o) o->alive = 0;
+        }
+    }
+    else if (strncmp(line, "OBJ_ADD ", 8) == 0) {
+        printf("adding");
+        int id = 0, r = 255, g = 255, b = 255;
+        float x=0,y=0,z=0,s=1;
+        if (sscanf(line + 8, "%d %f %f %f %f %d %d %d", &id, &x, &y, &z, &s, &r, &g, &b) == 8) {
+            ObjCube* o = alloc_obj(cs, id);
+            if (o) {
+                o->pos = (Vector3){ x, y, z };
+                o->size = s;
+                o->r = (unsigned char)r;
+                o->g = (unsigned char)g;
+                o->b = (unsigned char)b;
+            }
+        }
+    }
 }
 
 static int ray_hit_box(Camera3D cam, BoundingBox box) {
@@ -91,7 +135,39 @@ static int ray_hit_box(Camera3D cam, BoundingBox box) {
     return hit.hit;
 }
 
-int main(void) {
+static ObjCube* find_obj(ClientState* cs, int id) {
+    for (int i = 0; i < MAX_OBJS; i++) {
+        if (cs->objs[i].alive && cs->objs[i].id == id) return &cs->objs[i];
+    }
+    return NULL;
+}
+
+static ObjCube* alloc_obj(ClientState* cs, int id) {
+    ObjCube* o = find_obj(cs, id);
+    if (o) return o;
+    for (int i = 0; i < MAX_OBJS; i++) {
+        if (!cs->objs[i].alive) {
+            cs->objs[i].alive = 1;
+            cs->objs[i].id = id;
+            return &cs->objs[i];
+        }
+    }
+    return NULL;
+}
+
+static void clear_objs(ClientState* cs) {
+    for (int i = 0; i < MAX_OBJS; i++) cs->objs[i].alive = 0;
+}
+
+int main(int argc, char **argv) {
+    int disableLowRes = 1;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--lowres") == 0) {
+            disableLowRes = 0;
+        }
+    }
+
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(1280, 720, "0x10c Prototype - Client");
     SetExitKey(KEY_NULL);
@@ -123,8 +199,12 @@ int main(void) {
     };
 
     RenderTexture2D termRT = LoadRenderTexture(512, 256);
-    RenderTexture2D sceneRT = LoadRenderTexture(320, 180);
-    SetTextureFilter(sceneRT.texture, TEXTURE_FILTER_POINT);
+    RenderTexture2D sceneRT = { 0 };
+
+    if (!disableLowRes) {
+        sceneRT = LoadRenderTexture(320, 180);
+        SetTextureFilter(sceneRT.texture, TEXTURE_FILTER_POINT);
+    }
     Shader psxShader = LoadPsxShader();
 
     SetMouseCaptured(1);
@@ -248,28 +328,79 @@ int main(void) {
 
         termui_render(termRT, GetFontDefault(), &cs.term);
 
-        BeginTextureMode(sceneRT);
-            ClearBackground((Color){ 10, 10, 12, 255 });
-            BeginMode3D(camera);
-                DrawGrid(20, 1.0f);
-                DrawCube(deskPos, deskSize.x, deskSize.y, deskSize.z, DARKGRAY);
+        if (!disableLowRes) {
+            BeginTextureMode(sceneRT);
+                ClearBackground((Color){ 10, 10, 12, 255 });
+                BeginMode3D(camera);
+                    DrawGrid(20, 1.0f);
+                    DrawCube(deskPos, deskSize.x, deskSize.y, deskSize.z, DARKGRAY);
 
-                Vector3 screenPos = (Vector3){ monPos.x, monPos.y, monPos.z - (monSize.z/2 + 0.001f) };
-                Vector2 screenSize = (Vector2){ monSize.x * 0.95f, monSize.y * 0.90f };
+                    for (int i = 0; i < MAX_OBJS; i++) {
+                        if (!cs.objs[i].alive) continue;
+                        ObjCube* o = &cs.objs[i];
+                        Color col = (Color){ o->r, o->g, o->b, 255 };
+                        DrawCube(o->pos, o->size, o->size, o->size, col);
+                        DrawCubeWires(o->pos, o->size, o->size, o->size, (Color){0,0,0,120});
+                    }
 
-                Rectangle srcTerm = (Rectangle){ 0, 0, (float)termRT.texture.width, (float)-termRT.texture.height };
-                DrawBillboardRec(camera, termRT.texture, srcTerm, screenPos, screenSize, WHITE);
-            EndMode3D();
-        EndTextureMode();
+                    Vector3 screenPos = (Vector3){ monPos.x, monPos.y, monPos.z - (monSize.z/2 + 0.001f) };
+                    Vector2 screenSize = (Vector2){ monSize.x * 0.95f, monSize.y * 0.90f };
+
+                    Rectangle srcTerm = {
+                        0, 0,
+                        (float)termRT.texture.width,
+                        (float)-termRT.texture.height
+                    };
+
+                    DrawBillboardRec(camera, termRT.texture, srcTerm, screenPos, screenSize, WHITE);
+                EndMode3D();
+            EndTextureMode();
+        }
 
         BeginDrawing();
             ClearBackground(BLACK);
-            DrawTexturePro(sceneRT.texture,
-                (Rectangle){ 0,0,320,-180 },
-                (Rectangle){ 0,0,(float)GetScreenWidth(),(float)GetScreenHeight() },
-                (Vector2){ 0,0 }, 0, WHITE);
+
+            if (!disableLowRes) {
+                DrawTexturePro(sceneRT.texture,
+                    (Rectangle){ 0, 0, 320, -180 },
+                    (Rectangle){
+                        0, 0,
+                        (float)GetScreenWidth(),
+                        (float)GetScreenHeight()
+                    },
+                    (Vector2){ 0, 0 }, 0, WHITE);
+            } else {
+                BeginMode3D(camera);
+                    DrawGrid(20, 1.0f);
+                    DrawCube(deskPos, deskSize.x, deskSize.y, deskSize.z, DARKGRAY);
+
+                    for (int i = 0; i < MAX_OBJS; i++) {
+                        if (!cs.objs[i].alive) continue;
+                        ObjCube* o = &cs.objs[i];
+                        Color col = (Color){ o->r, o->g, o->b, 255 };
+                        DrawCube(o->pos, o->size, o->size, o->size, col);
+                        DrawCubeWires(o->pos, o->size, o->size, o->size, (Color){0,0,0,120});
+                    }
+
+                    Vector3 screenPos = (Vector3){ monPos.x, monPos.y, monPos.z - (monSize.z/2 + 0.001f) };
+                    Vector2 screenSize = (Vector2){ monSize.x * 0.95f, monSize.y * 0.90f };
+
+                    Rectangle srcTerm = {
+                        0, 0,
+                        (float)termRT.texture.width,
+                        (float)-termRT.texture.height
+                    };
+
+                    DrawBillboardRec(camera, termRT.texture, srcTerm, screenPos, screenSize, WHITE);
+                EndMode3D();
+            }
         EndDrawing();
     }
+
+    if (!disableLowRes) {
+        UnloadRenderTexture(sceneRT);
+    }
+    UnloadRenderTexture(termRT);
 
     net_close(&cs.net);
     net_shutdown();
